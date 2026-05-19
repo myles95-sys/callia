@@ -327,7 +327,7 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
     twilioReady: !!process.env.DEMO_TWILIO_NUMBER,
-    model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
+    model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
     rateLimit: { max: RATE_LIMIT, windowMs: RATE_WINDOW_MS },
   });
 });
@@ -346,7 +346,7 @@ app.post("/api/chat", rateLimit, async (req, res) => {
   }
   try {
     const completion = await anthropic.messages.create({
-      model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
+      model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
       max_tokens: 400,
       system: system || "Tu es une assistante telephonique IA polie et concise.",
       messages: [...messages, { role: "user", content: userMessage }],
@@ -378,7 +378,7 @@ app.post("/api/summarize", rateLimit, async (req, res) => {
   }
   try {
     const completion = await anthropic.messages.create({
-      model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
+      model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
       max_tokens: 400,
       system: "Tu analyses des transcripts d'appels. Retourne STRICTEMENT un JSON avec : summary (2 phrases max), intent (information|prise_rdv|commande|plainte|transfert_demande|autre), action (1 phrase courte). Pas de markdown.",
       messages: [{ role: "user", content: "Entreprise : " + (agent?.name || "Inconnue") + "\nSecteur : " + (agent?.sector || "") + "\n\nTranscript :\n" + dialogue }],
@@ -408,7 +408,7 @@ app.post("/api/suggest-faqs", rateLimit, async (req, res) => {
   }
   try {
     const completion = await anthropic.messages.create({
-      model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
+      model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
       max_tokens: 1500,
       system: "Tu es expert CRM PME. Genere 10 questions frequentes et reponses TYPE pour cette entreprise. Reponses concises (1-2 phrases), naturelles. Retourne STRICTEMENT { \"faqs\": [{ \"question\": \"...\", \"answer\": \"...\" }] } sans markdown.",
       messages: [{ role: "user", content: "Entreprise : " + (name || "Sans nom") + "\nSecteur : " + sector + "\nDescription : " + description }],
@@ -503,7 +503,7 @@ app.post("/respond", async (req, res) => {
     if (anthropic) {
       const completion = await Promise.race([
         anthropic.messages.create({
-          model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
+          model: process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001",
           max_tokens: 200,
           system: session.systemPrompt,
           messages: [...session.history, { role: "user", content: userSpeech }],

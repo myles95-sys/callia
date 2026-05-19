@@ -4,19 +4,84 @@ import { saveCall } from "../lib/agents.js";
 import CallSummary from "./CallSummary.jsx";
 
 // ─── TTS navigateur (Web Speech) ────────────────────────────────────────────
-function speak(text, lang = "fr-FR", onStart, onEnd) {
+// Patterns voix FEMININES (couvre Google, Microsoft, Apple, Samsung, Android)
+const FEMALE_VOICE_PATTERNS = /amelie|aur[ée]lie|marie|chloe|chlo[ée]|virginie|c[ée]lest|c[ée]line|hortense|julie|sophie|isabelle|emma|elise|audrey|brigitte|female|femme|woman|girl|standard-a|standard-c|standard-e|wavenet-a|wavenet-c|wavenet-e|neural2-a|neural2-c|neural2-e|google\s*fran[çc]ais.*fran[çc]e|microsoft\s*denise|microsoft\s*julie|microsoft\s*hortense|samsung\s*female/i;
+
+// Patterns voix MASCULINES — à éviter
+const MALE_VOICE_PATTERNS = /thomas|mathieu|nicolas|paul|antoine|henri|jean|pierre|male\b|homme|man\b|standard-b|standard-d|wavenet-b|wavenet-d|neural2-b|neural2-d|microsoft\s*paul|microsoft\s*claude/i;
+
+// Attend que les voix soient chargées (Android les charge async)
+function waitForVoices(timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const synth = window.speechSynthesis;
+    if (!synth) return resolve([]);
+    let voices = synth.getVoices();
+    if (voices.length) return resolve(voices);
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      synth.onvoiceschanged = null;
+      resolve(synth.getVoices());
+    };
+    synth.onvoiceschanged = finish;
+    setTimeout(finish, timeoutMs);
+  });
+}
+
+function pickBestVoice(voices, lang) {
+  const langCode = lang.split("-")[0];
+  // Filtre voix pour la bonne langue
+  const sameLang = voices.filter(v => v.lang === lang);
+  const sameLangFamily = voices.filter(v => v.lang.startsWith(langCode));
+
+  // 1. Voix féminine explicite dans la bonne locale
+  let pick = sameLang.find(v => FEMALE_VOICE_PATTERNS.test(v.name));
+  if (pick) return pick;
+
+  // 2. Voix féminine dans la famille de langue (ex fr-CA pour fr-FR)
+  pick = sameLangFamily.find(v => FEMALE_VOICE_PATTERNS.test(v.name));
+  if (pick) return pick;
+
+  // 3. Google voice de qualité dans la bonne locale (souvent féminine par défaut)
+  pick = sameLang.find(v => /google/i.test(v.name) && !MALE_VOICE_PATTERNS.test(v.name));
+  if (pick) return pick;
+
+  // 4. N'importe quelle voix qui n'est PAS masculine, dans la bonne locale
+  pick = sameLang.find(v => !MALE_VOICE_PATTERNS.test(v.name));
+  if (pick) return pick;
+
+  // 5. Idem mais famille de langue
+  pick = sameLangFamily.find(v => !MALE_VOICE_PATTERNS.test(v.name));
+  if (pick) return pick;
+
+  // 6. Tant pis — n'importe quelle voix de la bonne locale
+  return sameLang[0] || sameLangFamily[0] || null;
+}
+
+async function speak(text, lang = "fr-FR", onStart, onEnd) {
   if (!("speechSynthesis" in window)) { onEnd?.(); return; }
-  window.speechSynthesis.cancel();
+  const synth = window.speechSynthesis;
+  synth.cancel();
+
+  const voices = await waitForVoices();
+  const pick = pickBestVoice(voices, lang);
+
   const utt = new SpeechSynthesisUtterance(text);
-  utt.lang = lang; utt.rate = 1.15; utt.pitch = 1.05;
-  const voices = window.speechSynthesis.getVoices();
-  const pick = voices.find(v => v.lang === lang && /google/i.test(v.name))
-    || voices.find(v => v.lang === lang && /amelie|aurelie|marie|chloe|virginie/i.test(v.name))
-    || voices.find(v => v.lang === lang)
-    || voices.find(v => v.lang.startsWith(lang.split("-")[0])) || null;
+  utt.lang = lang;
   if (pick) utt.voice = pick;
-  utt.onstart = onStart; utt.onend = onEnd; utt.onerror = onEnd;
-  window.speechSynthesis.speak(utt);
+
+  // Si on a une voix masculine (échec du picker), on monte le pitch pour féminiser
+  const isMale = pick && MALE_VOICE_PATTERNS.test(pick.name);
+  utt.pitch = isMale ? 1.4 : 1.05;
+  // Rate plus lent sur mobile pour la clarté
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  utt.rate = isMobile ? 0.95 : 1.1;
+
+  utt.onstart = onStart;
+  utt.onend = onEnd;
+  utt.onerror = onEnd;
+  synth.speak(utt);
 }
 
 
