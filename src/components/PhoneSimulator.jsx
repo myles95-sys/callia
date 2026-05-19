@@ -29,53 +29,78 @@ function waitForVoices(timeoutMs = 1500) {
   });
 }
 
-// Note un score de qualité à chaque voix (plus c'est haut, mieux c'est)
-function scoreVoice(v, lang) {
-  let score = 0;
-  // +50 si NETWORK voice (Google WaveNet/Neural) — sur Android c'est ÉNORME
-  if (v.localService === false) score += 50;
-  // +30 si la locale matche exactement (fr-FR)
-  if (v.lang === lang) score += 30;
-  else if (v.lang.startsWith(lang.split("-")[0])) score += 15;
-  // +25 si Google (les voix Google sont de loin les meilleures)
-  if (/google/i.test(v.name)) score += 25;
-  // +20 si féminine détectée
-  if (FEMALE_VOICE_PATTERNS.test(v.name)) score += 20;
-  // -40 si masculine détectée (pénalité forte)
-  if (MALE_VOICE_PATTERNS.test(v.name)) score -= 40;
-  // +15 si neural/wavenet/premium dans le nom (qualité élevée)
-  if (/neural|wavenet|premium|enhanced|natural/i.test(v.name)) score += 15;
-  // -10 si compact/eloquence (synthèses basse qualité Apple/IBM)
-  if (/compact|eloquence/i.test(v.name)) score -= 10;
-  // +10 si "default" (souvent la voix de référence)
-  if (v.default) score += 10;
-  return score;
-}
+// Détection de la plateforme
+const IS_IOS = typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(navigator.userAgent);
+const IS_ANDROID = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 
+// Sur iOS la meilleure voix française est "Amélie" (fr-CA, locale)
+// Sur Android on cherche les voix Google réseau de qualité (fr-CA puis fr-FR)
 function pickBestVoice(voices, lang) {
   if (!voices.length) return null;
-  // Vérifie si l'utilisateur a sauvegardé une préférence
-  try {
-    const savedURI = localStorage.getItem("callia_voice_uri");
-    if (savedURI) {
-      const saved = voices.find(v => v.voiceURI === savedURI);
-      if (saved) return saved;
-    }
-  } catch (_) {}
 
-  // Sinon, score toutes les voix et prends la meilleure
+  // iOS : force "Amélie" si dispo (la meilleure voix française d'Apple)
+  if (IS_IOS) {
+    const amelie = voices.find(v => /am[ée]lie/i.test(v.name));
+    if (amelie) return amelie;
+    // Fallback iOS : autre voix française féminine (Audrey, Aurélie, Marie, Virginie)
+    const iosFemale = voices.find(v => /audrey|aur[ée]lie|marie|virginie/i.test(v.name));
+    if (iosFemale) return iosFemale;
+  }
+
+  // Android : prioriser Google network voices (fr-CA puis fr-FR)
+  if (IS_ANDROID) {
+    // Google fr-CA réseau (l'équivalent le plus proche d'Amélie)
+    let pick = voices.find(v => /google/i.test(v.name) && /fr-CA/i.test(v.lang) && v.localService === false);
+    if (pick) return pick;
+    // Google fr-FR réseau
+    pick = voices.find(v => /google/i.test(v.name) && /fr-FR/i.test(v.lang) && v.localService === false);
+    if (pick) return pick;
+    // N'importe quelle voix Google FR réseau
+    pick = voices.find(v => /google/i.test(v.name) && /^fr/i.test(v.lang) && v.localService === false);
+    if (pick) return pick;
+    // Voix française féminine (réseau de préférence)
+    pick = voices.find(v => /^fr/i.test(v.lang) && FEMALE_VOICE_PATTERNS.test(v.name) && v.localService === false)
+        || voices.find(v => /^fr/i.test(v.lang) && FEMALE_VOICE_PATTERNS.test(v.name));
+    if (pick) return pick;
+  }
+
+  // Desktop ou fallback : meilleure voix dans la langue demandée, non-masculine
   const langCode = lang.split("-")[0];
-  const candidates = voices.filter(v => v.lang === lang || v.lang.startsWith(langCode));
-  if (!candidates.length) return voices[0];
-  return candidates.sort((a, b) => scoreVoice(b, lang) - scoreVoice(a, lang))[0];
+  const sameLang = voices.filter(v => v.lang === lang);
+  const sameLangFamily = voices.filter(v => v.lang.startsWith(langCode));
+  return sameLang.find(v => FEMALE_VOICE_PATTERNS.test(v.name))
+      || sameLangFamily.find(v => FEMALE_VOICE_PATTERNS.test(v.name))
+      || sameLang.find(v => /google/i.test(v.name))
+      || sameLang.find(v => !MALE_VOICE_PATTERNS.test(v.name))
+      || sameLangFamily.find(v => !MALE_VOICE_PATTERNS.test(v.name))
+      || sameLang[0]
+      || sameLangFamily[0]
+      || voices[0];
 }
 
-// Retourne la liste des voix utilisables (pour le sélecteur UI)
-function getUsableVoices(voices, lang) {
-  const langCode = lang.split("-")[0];
-  return voices
-    .filter(v => v.lang === lang || v.lang.startsWith(langCode))
-    .sort((a, b) => scoreVoice(b, lang) - scoreVoice(a, lang));
+// Supprime emojis et autres caractères symboliques pour qu'ils ne soient pas lus à voix haute
+function stripEmojis(text) {
+  if (!text) return text;
+  return text
+    // Plages Unicode des emojis et pictogrammes
+    .replace(/[\u{1F300}-\u{1F9FF}]/gu, "")        // Symbols & Pictographs
+    .replace(/[\u{1FA00}-\u{1FA6F}]/gu, "")        // Chess, etc.
+    .replace(/[\u{1FA70}-\u{1FAFF}]/gu, "")        // Symbols extended
+    .replace(/[\u{2600}-\u{26FF}]/gu, "")          // Misc symbols (☀️ ⚡)
+    .replace(/[\u{2700}-\u{27BF}]/gu, "")          // Dingbats (✓ ✗ ❤)
+    .replace(/[\u{1F000}-\u{1F02F}]/gu, "")        // Mahjong/dominoes
+    .replace(/[\u{1F0A0}-\u{1F0FF}]/gu, "")        // Cartes à jouer
+    .replace(/[\u{1F100}-\u{1F2FF}]/gu, "")        // Enclosed alphanum
+    .replace(/[\u{FE00}-\u{FE0F}]/gu, "")          // Variation selectors
+    .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, "")        // Drapeaux régionaux
+    .replace(/[\u{200D}]/gu, "")                   // Zero-width joiner
+    // Smileys ASCII courants : :), :-), ;), :D, etc.
+    .replace(/(^|[\s.,!?])[:;=][\-^]?[\)\(\[\]DPpoO\\\/]+/g, "$1")
+    .replace(/<3/g, "")
+    // Nettoie les espaces multiples laissés
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+([.,!?;:])/g, "$1")
+    .trim();
 }
 
 async function speak(text, lang = "fr-FR", onStart, onEnd) {
@@ -83,11 +108,16 @@ async function speak(text, lang = "fr-FR", onStart, onEnd) {
   const synth = window.speechSynthesis;
   synth.cancel();
 
+  // Toujours retirer les emojis avant de parler
+  const clean = stripEmojis(text);
+  if (!clean) { onEnd?.(); return; }
+
   const voices = await waitForVoices();
   const pick = pickBestVoice(voices, lang);
 
-  const utt = new SpeechSynthesisUtterance(text);
-  utt.lang = lang;
+  const utt = new SpeechSynthesisUtterance(clean);
+  // Si on a une voix iOS fr-CA (Amélie), on utilise sa locale native
+  utt.lang = pick?.lang || lang;
   if (pick) {
     utt.voice = pick;
     console.log("[Callia TTS] Voice:", pick.name, "| local:", pick.localService, "| lang:", pick.lang);
@@ -97,8 +127,7 @@ async function speak(text, lang = "fr-FR", onStart, onEnd) {
   const isMale = pick && MALE_VOICE_PATTERNS.test(pick.name);
   utt.pitch = isMale ? 1.2 : 1.0;
   // Rate plus lent sur mobile pour la clarté
-  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-  utt.rate = isMobile ? 0.9 : 1.05;
+  utt.rate = (IS_IOS || IS_ANDROID) ? 0.95 : 1.05;
   utt.volume = 1.0;
 
   utt.onstart = onStart;
@@ -187,10 +216,6 @@ export default function PhoneSimulator({ agent, onClose, persistCalls = true }) 
   const [duration, setDuration] = useState(0);
   const [transferred, setTransferred] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
-  const [voices, setVoices] = useState([]);
-  const [selectedVoiceURI, setSelectedVoiceURI] = useState(() => {
-    try { return localStorage.getItem("callia_voice_uri") || ""; } catch { return ""; }
-  });
 
   const apiHist     = useRef([]);
   const msgEnd      = useRef(null);
@@ -201,21 +226,6 @@ export default function PhoneSimulator({ agent, onClose, persistCalls = true }) 
 
   useEffect(() => { setHasSR("webkitSpeechRecognition" in window || "SpeechRecognition" in window); }, []);
   useEffect(() => { msgEnd.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
-  // Chargement des voix dispos pour le sélecteur
-  useEffect(() => {
-    let cancelled = false;
-    waitForVoices().then(vs => {
-      if (cancelled) return;
-      const usable = getUsableVoices(vs, agent.language || "fr-FR");
-      setVoices(usable);
-    });
-    return () => { cancelled = true; };
-  }, [agent.language]);
-
-  const onVoiceChange = (uri) => {
-    setSelectedVoiceURI(uri);
-    try { uri ? localStorage.setItem("callia_voice_uri", uri) : localStorage.removeItem("callia_voice_uri"); } catch {}
-  };
   useEffect(() => {
     if (phase === "active") {
       durationTimer.current = setInterval(() => {
@@ -470,36 +480,6 @@ export default function PhoneSimulator({ agent, onClose, persistCalls = true }) 
               )}
             </div>
 
-            {/* Sélecteur de voix (utile sur mobile pour choisir une voix plus naturelle) */}
-            {voices.length > 1 && (
-              <div style={{ padding: "10px 14px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 6 }}>
-                <label style={{ fontSize: 11, opacity: 0.65, textTransform: "uppercase", letterSpacing: ".06em" }}>
-                  🎙 Voix utilisée
-                </label>
-                <select
-                  value={selectedVoiceURI}
-                  onChange={(e) => onVoiceChange(e.target.value)}
-                  style={{
-                    background: "var(--surface)",
-                    border: "1px solid var(--border)",
-                    color: "var(--text)",
-                    borderRadius: 8,
-                    padding: "8px 10px",
-                    fontSize: 13,
-                  }}
-                >
-                  <option value="">🎯 Automatique (meilleure qualité)</option>
-                  {voices.map(v => (
-                    <option key={v.voiceURI} value={v.voiceURI}>
-                      {v.name} {v.localService === false ? "· en ligne" : "· local"} · {v.lang}
-                    </option>
-                  ))}
-                </select>
-                <div style={{ fontSize: 11, opacity: 0.55, marginTop: 2 }}>
-                  Les voix "en ligne" (Google) sonnent beaucoup mieux sur mobile.
-                </div>
-              </div>
-            )}
 
             {/* Input texte */}
             <div className="sim-input-row">
