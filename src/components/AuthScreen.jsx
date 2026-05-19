@@ -1,27 +1,25 @@
 import { useState } from "react";
-import { supabase } from "../lib/supabase.js";
 import "../styles/landing.css";
 
-export default function AuthScreen({ onBackToLanding }) {
+export default function AuthScreen({ onBackToLanding, onLogin }) {
   const [email, setEmail]   = useState("");
-  const [sent, setSent]     = useState(false);
   const [loading, setLoad]  = useState(false);
   const [error, setError]   = useState("");
 
   const send = async (e) => {
     e.preventDefault();
     setError(""); setLoad(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin },
-    });
+    // Bypass magic link : accepte n'importe quel email valide et envoie direct au dashboard
+    try {
+      // Sauvegarde l'email localement pour le contexte de session simulée
+      localStorage.setItem("callia_user_email", email);
+    } catch {}
     setLoad(false);
-    if (error) setError(error.message);
-    else setSent(true);
+    onLogin?.(email);
   };
 
   return (
-    <div className="landing-root" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, position: "relative" }}>
+    <div className="landing-root auth-screen-root" style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 16px", position: "relative" }}>
       <div className="bg-grid" />
       <div className="bg-orbs">
         <div className="orb orb-1" style={{ top: "10%", left: "10%" }} />
@@ -38,11 +36,11 @@ export default function AuthScreen({ onBackToLanding }) {
           </button>
         )}
 
-        <div style={{
+        <div className="auth-card" style={{
           background: "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01))",
           border: "1px solid var(--line-strong)",
           borderRadius: 20,
-          padding: 38,
+          padding: "clamp(22px, 5vw, 38px)",
           backdropFilter: "blur(20px)",
           boxShadow: "0 30px 80px -20px rgba(0,0,0,0.6), 0 0 0 1px var(--accent-soft)"
         }}>
@@ -52,43 +50,28 @@ export default function AuthScreen({ onBackToLanding }) {
             <p style={{ fontSize: 14, color: "var(--text-dim)", margin: "8px 0 0" }}>Connecte-toi pour gerer tes agents IA</p>
           </div>
 
-          {sent ? (
-            <div style={{ textAlign: "center", padding: "20px 0" }}>
-              <div style={{ fontSize: 44, marginBottom: 14, animation: "float 3s ease-in-out infinite" }}>📩</div>
-              <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px", color: "var(--text)" }}>Lien envoye !</h2>
-              <p style={{ fontSize: 14, color: "var(--text-dim)", lineHeight: 1.6 }}>
-                Verifie ta boite mail (<strong style={{ color: "var(--accent)" }}>{email}</strong>) et clique sur le lien pour te connecter.<br/>
-                Aucun mot de passe a retenir.
-              </p>
-              <button onClick={() => { setSent(false); setEmail(""); }}
-                style={{ marginTop: 20, background: "transparent", border: "none", color: "var(--accent)", fontSize: 13, cursor: "pointer", textDecoration: "underline", fontFamily: "inherit" }}>
-                Essayer avec une autre adresse
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={send}>
-              <label style={{ display: "block", fontSize: 13, color: "var(--text-dim)", marginBottom: 8, fontWeight: 500 }}>Adresse email</label>
-              <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
-                placeholder="vous@entreprise.com"
-                style={{ width: "100%", padding: "12px 16px", fontSize: 14, borderRadius: 10, marginBottom: 16, fontFamily: "inherit", boxSizing: "border-box" }} />
+          <form onSubmit={send}>
+            <label style={{ display: "block", fontSize: 13, color: "var(--text-dim)", marginBottom: 8, fontWeight: 500 }}>Adresse email</label>
+            <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
+              placeholder="vous@entreprise.com"
+              style={{ width: "100%", padding: "12px 16px", fontSize: 14, borderRadius: 10, marginBottom: 16, fontFamily: "inherit", boxSizing: "border-box" }} />
 
-              {error && (
-                <div style={{ color: "#fca5a5", fontSize: 12, marginBottom: 12, padding: "8px 12px", background: "rgba(239, 68, 68, 0.1)", borderRadius: 8, border: "1px solid rgba(239, 68, 68, 0.2)" }}>
-                  &#9888; {error}
-                </div>
-              )}
+            {error && (
+              <div style={{ color: "#fca5a5", fontSize: 12, marginBottom: 12, padding: "8px 12px", background: "rgba(239, 68, 68, 0.1)", borderRadius: 8, border: "1px solid rgba(239, 68, 68, 0.2)" }}>
+                &#9888; {error}
+              </div>
+            )}
 
-              <button type="submit" disabled={loading} className="btn btn-primary"
-                style={{ width: "100%", padding: "14px", fontSize: 14, opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer" }}>
-                {loading ? "Envoi..." : "Recevoir un lien magique →"}
-              </button>
+            <button type="submit" disabled={loading} className="btn btn-primary"
+              style={{ width: "100%", padding: "14px", fontSize: 14, opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer" }}>
+              {loading ? "Connexion..." : "Accéder à mon espace →"}
+            </button>
 
-              <p style={{ fontSize: 12, color: "var(--text-faint)", textAlign: "center", marginTop: 18, lineHeight: 1.6 }}>
-                Pas de mot de passe — un lien magique sera envoye a votre adresse.<br/>
-                Premiere connexion = creation de compte automatique.
-              </p>
-            </form>
-          )}
+            <p style={{ fontSize: 12, color: "var(--text-faint)", textAlign: "center", marginTop: 18, lineHeight: 1.6 }}>
+              Aucun mot de passe — accès immédiat avec votre email.<br/>
+              Première visite = création automatique de votre espace.
+            </p>
+          </form>
         </div>
       </div>
     </div>

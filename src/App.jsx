@@ -55,21 +55,39 @@ export default function App() {
   const toggleTheme = () => setTheme(t => t === "dark" ? "light" : "dark");
 
   useEffect(() => {
+    // Restaure une session "simple" (bypass magic link) si email déjà saisi
+    try {
+      const savedEmail = localStorage.getItem("callia_user_email");
+      if (savedEmail) {
+        setSession({ user: { email: savedEmail, id: "local-" + savedEmail } });
+        setView("app");
+      }
+    } catch {}
+
     if (!HAS_SUPABASE) {
       setReady(true);
       return;
     }
     supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      if (data.session) setView("app");
+      if (data.session) {
+        setSession(data.session);
+        setView("app");
+      }
       setReady(true);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
-      if (s) setView("app");
+      if (s) {
+        setSession(s);
+        setView("app");
+      }
     });
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  const handleSimpleLogin = (email) => {
+    setSession({ user: { email, id: "local-" + email } });
+    setView("app");
+  };
 
   useEffect(() => { checkBackendHealth().then(setHealth); }, []);
 
@@ -120,7 +138,7 @@ export default function App() {
   }
 
   if (view === "auth" && !session) {
-    return <AuthScreen onBackToLanding={() => setView("landing")} />;
+    return <AuthScreen onBackToLanding={() => setView("landing")} onLogin={handleSimpleLogin} />;
   }
 
   const userEmail = session?.user?.email;
@@ -128,7 +146,11 @@ export default function App() {
   const isAdmin = !HAS_SUPABASE || (userEmail && ADMIN_EMAIL && userEmail.toLowerCase() === ADMIN_EMAIL.toLowerCase());
 
   const signOut = async () => {
-    if (HAS_SUPABASE) await supabase.auth.signOut();
+    try { localStorage.removeItem("callia_user_email"); } catch {}
+    if (HAS_SUPABASE) {
+      try { await supabase.auth.signOut(); } catch {}
+    }
+    setSession(null);
     setView("landing");
   };
 
@@ -200,13 +222,25 @@ export default function App() {
           />
         )}
 
-        <div style={{ display: "flex", gap: 4, marginBottom: "1.5rem", borderBottom: "1px solid var(--line)" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 4,
+            marginBottom: "1.5rem",
+            borderBottom: "1px solid var(--line)",
+            overflowX: "auto",
+            overflowY: "hidden",
+            WebkitOverflowScrolling: "touch",
+            scrollbarWidth: "none",
+            msOverflowStyle: "none",
+          }}
+        >
           {TABS.map(t => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
               style={{
-                padding: "10px 18px",
+                padding: "10px 16px",
                 fontSize: 13,
                 fontWeight: 500,
                 border: "none",
@@ -215,7 +249,9 @@ export default function App() {
                 background: "transparent",
                 color: tab === t.id ? "var(--accent)" : "var(--text-dim)",
                 marginBottom: -1,
-                fontFamily: "inherit"
+                fontFamily: "inherit",
+                whiteSpace: "nowrap",
+                flexShrink: 0,
               }}
             >
               {t.label}
