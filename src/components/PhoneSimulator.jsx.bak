@@ -1,0 +1,388 @@
+import { useState, useRef, useEffect } from "react";
+import { askClaude } from "../lib/api.js";
+import { saveCall } from "../lib/agents.js";
+
+// ─── TTS navigateur (Web Speech) ────────────────────────────────────────────
+function speak(text, lang = "fr-FR", onStart, onEnd) {
+  if (!("speechSynthesis" in window)) { onEnd?.(); return; }
+  window.speechSynthesis.cancel();
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = lang; utt.rate = 1.15; utt.pitch = 1.05;
+  const voices = window.speechSynthesis.getVoices();
+  const pick = voices.find(v => v.lang === lang && /google/i.test(v.name))
+    || voices.find(v => v.lang === lang && /amelie|aurelie|marie|chloe|virginie/i.test(v.name))
+    || voices.find(v => v.lang === lang)
+    || voices.find(v => v.lang.startsWith(lang.split("-")[0])) || null;
+  if (pick) utt.voice = pick;
+  utt.onstart = onStart; utt.onend = onEnd; utt.onerror = onEnd;
+  window.speechSynthesis.speak(utt);
+}
+
+function buildSystemPrompt(agent) {
+  const toneMap = {
+    chaleureux: "Adopte un ton chaleureux, amical et naturel comme a l'oral.",
+    formel: "Adopte un ton professionnel et formel mais courtois.",
+    direct: "Adopte un ton direct et efficace, va droit au but.",
+  };
+  const faqBlock = agent.faqs?.length
+    ? "\n\nFAQ PRIORITAIRE — Utilise EXACTEMENT ces reponses si la question correspond, meme avec des fautes d'orthographe ou une formulation differente :\n" +
+      agent.faqs.map((f, i) => `Q${i+1}: ${f.question}\nR${i+1}: ${f.answer}`).join("\n\n")
+    : "";
+
+  const integrations = [];
+  if (agent.calendly_url) {
+    integrations.push(`- Lien Calendly pour prise de RDV ou commande planifiee : ${agent.calendly_url}\n  Propose-le PROACTIVEMENT quand le client veut prendre un RDV, planifier une commande pour une date future, ou demande "comment commander".`);
+  }
+  if (agent.escalation_phone) {
+    integrations.push(`- Numero de transfert humain : ${agent.escalation_phone}\n  TRANSFERT = DERNIER RECOURS ABSOLU. Ne propose ce transfert QUE dans ces cas :\n    1. Le client est clairement enerve, mecontent, ou demande explicitement "un humain" / "un conseiller" / "le manager".\n    2. Tu as deja tente de repondre 2 fois sans succes et le client insiste.\n    3. La demande est une urgence reelle (medicale, securite) ou une plainte formelle / litige / negociation de prix.\n  Pour TOUT le reste (horaires, services, prix listes, commandes, FAQ) : tu reponds TOI-MEME, jamais de transfert.`);
+  }
+  const integrationsBlock = integrations.length
+    ? "\n\nINTEGRATIONS DISPONIBLES :\n" + integrations.join("\n\n")
+    : "";
+
+  return `Tu es ${agent.agent_name || "Sabrina"}, l'assistante telephonique IA de "${agent.name}" (${agent.sector}).
+
+Description : ${agent.description}
+Services proposes : ${agent.services}
+Horaires : ${agent.hours}
+Adresse : ${agent.address}
+Telephone : ${agent.phone}${faqBlock}${integrationsBlock}
+
+REGLES IMPORTANTES :
+- ${toneMap[agent.tone] || toneMap.chaleureux}
+- Reponds en francais naturel, comme a l'oral : 1 a 3 phrases courtes, jamais plus.
+- Evite les formules robotiques ("Je suis la pour vous aider" est interdit).
+- Si la question correspond a la FAQ (meme avec fautes), utilise la reponse FAQ.
+- Si tu ne trouves pas en FAQ : tente d'aider avec les infos generales (description, services, horaires, adresse).
+- Si tu n'as VRAIMENT pas l'info : reponds "Je ne suis pas sure de cela, voulez-vous que je prenne un message pour le responsable ?" — NE TRANSFERE PAS systematiquement.
+- TRANSFERT HUMAIN = uniquement les 3 cas listes plus haut (enerve / 2 echecs / urgence-plainte). JAMAIS pour une simple question.
+- Ne donne JAMAIS d'information que tu n'as pas recue ci-dessus.`;
+}
+
+
+// ─── Mini composant : barres audio reactives ─────────────────────────────
+function AudioBars({ active, count = 16 }) {
+  return (
+    <div className="audio-bars" data-active={active ? "1" : "0"}>
+      {Array.from({ length: count }).map((_, i) => (
+        <span key={i} style={{ animationDelay: (i * 60) + "ms" }} />
+      ))}
+    </div>
+  );
+}
+
+// ─── Formatage durée ────────────────────────────────────────────────────
+function formatDuration(sec) {
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+
+export default function PhoneSimulator({ agent, onClose, persistCalls = true }) {
+  const [phase, setPhase]   = useState("ringing");  // ringing | active | ended
+  const [msgs, setMsgs]     = useState([]);
+  const [status, setStatus] = useState("waiting");  // waiting | listening | thinking | speaking
+  const [input, setInput]   = useState("");
+  const [hasSR, setHasSR]   = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [transferred, setTransferred] = useState(false);
+
+  const apiHist     = useRef([]);
+  const msgEnd      = useRef(null);
+  const reco        = useRef(null);
+  const callStart   = useRef(null);
+  const durationTimer = useRef(null);
+  const systemPrompt = useRef(buildSystemPrompt(agent));
+
+  useEffect(() => { setHasSR("webkitSpeechRecognition" in window || "SpeechRecognition" in window); }, []);
+  useEffect(() => { msgEnd.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
+  useEffect(() => {
+    if (phase === "active") {
+      durationTimer.current = setInterval(() => {
+        if (callStart.current) setDuration(Math.floor((Date.now() - callStart.current) / 1000));
+      }, 1000);
+      return () => clearInterval(durationTimer.current);
+    }
+  }, [phase]);
+
+  const addMsg = (role, content, opts = {}) =>
+    setMsgs(p => [...p, {
+      role, content,
+      ts: new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
+      ...opts,
+    }]);
+
+  const answer = () => {
+    setPhase("active");
+    callStart.current = Date.now();
+    const greeting = agent.greeting ||
+      `${agent.name}, bonjour ! ${agent.agent_name || "Sabrina"} a l'appareil, que puis-je faire pour vous ?`;
+    addMsg("assistant", greeting);
+    apiHist.current = [{ role: "user", content: "Bonjour" }, { role: "assistant", content: greeting }];
+    setStatus("speaking");
+    speak(greeting, agent.language || "fr-FR", () => setStatus("speaking"), () => setStatus("waiting"));
+  };
+
+  const hangup = async () => {
+    window.speechSynthesis?.cancel();
+    reco.current?.abort();
+    setPhase("ended");
+    setStatus("waiting");
+    if (persistCalls && msgs.filter(m => m.role === "user").length > 0) {
+      try {
+        const dur = callStart.current ? Math.round((Date.now() - callStart.current) / 1000) : null;
+        await saveCall({ agent_id: agent.id, transcript: msgs, duration_sec: dur });
+      } catch (e) { console.warn("Sauvegarde appel echouee:", e.message); }
+    }
+  };
+
+  const respond = async (txt) => {
+    addMsg("user", txt);
+    setStatus("thinking");
+    try {
+      const reply = await askClaude({
+        system: systemPrompt.current,
+        history: apiHist.current,
+        userMessage: txt,
+      });
+      apiHist.current = [...apiHist.current, { role: "user", content: txt }, { role: "assistant", content: reply }];
+      addMsg("assistant", reply);
+      setStatus("speaking");
+      speak(reply, agent.language || "fr-FR", () => setStatus("speaking"), () => setStatus("waiting"));
+    } catch (err) {
+      const fallback = err.message?.includes("429")
+        ? "Trop de requetes en rafale. Patiente quelques secondes."
+        : "Desolee, une erreur s'est produite. Pouvez-vous repeter ?";
+      addMsg("assistant", fallback);
+      setStatus("waiting");
+    }
+  };
+
+  const listen = () => {
+    if (!hasSR || status !== "waiting") return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const r = new SR(); r.lang = agent.language || "fr-FR"; r.interimResults = false;
+    reco.current = r;
+    r.onresult = e => { setStatus("waiting"); respond(e.results[0][0].transcript); };
+    r.onerror = () => setStatus("waiting");
+    r.start(); setStatus("listening");
+  };
+
+  const sendText = () => {
+    const t = input.trim(); if (!t || status !== "waiting") return;
+    setInput(""); respond(t);
+  };
+
+  // Transfert vers humain
+  const transferToHuman = () => {
+    if (!agent.escalation_phone || transferred) return;
+    setTransferred(true);
+    const msg = `Je vous transfere a un conseiller au ${agent.escalation_phone}. Ne quittez pas, un instant je vous prie.`;
+    addMsg("assistant", msg, { kind: "transfer" });
+    setStatus("speaking");
+    speak(msg, agent.language || "fr-FR", () => setStatus("speaking"), () => {
+      setStatus("waiting");
+      setTimeout(() => {
+        addMsg("system", `Appel transfere vers ${agent.escalation_phone}`, { kind: "system" });
+      }, 800);
+    });
+  };
+
+  // Envoi de lien Calendly
+  const sendCalendly = () => {
+    if (!agent.calendly_url) return;
+    const msg = `Je vous envoie le lien pour prendre rendez-vous en ligne : ${agent.calendly_url}`;
+    addMsg("assistant", msg, { kind: "calendly", link: agent.calendly_url });
+    apiHist.current = [...apiHist.current, { role: "assistant", content: msg }];
+    setStatus("speaking");
+    speak("Je vous envoie le lien pour prendre rendez-vous en ligne.", agent.language || "fr-FR", () => setStatus("speaking"), () => setStatus("waiting"));
+  };
+
+  const STATUS_LABEL = { waiting: "Connecte", listening: "Ecoute", thinking: "Reflechit", speaking: "Parle" };
+  const STATUS_COLOR = { waiting: "var(--accent)", listening: "var(--cyan)", thinking: "var(--violet)", speaking: "var(--magenta)" };
+
+  return (
+    <div className="sim-overlay">
+      <button className="sim-close" onClick={onClose} aria-label="Fermer">×</button>
+
+      <div className="sim-stage">
+
+        {/* ═══ PANNEAU GAUCHE : "TELEPHONE" futuriste ═══ */}
+        <div className="sim-phone">
+          <div className="sim-phone-aura" />
+
+          <div className="sim-phone-inner">
+            {/* Top status bar */}
+            <div className="sim-statusbar">
+              <span>{new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+              <div className="sim-statusbar-right">
+                <span className="sim-sig"><i /><i /><i /><i /></span>
+                <span>5G</span>
+                <span className="sim-batt" />
+              </div>
+            </div>
+
+            {phase === "ringing" && (
+              <div className="sim-ringing">
+                <div className="sim-avatar-ring">
+                  <div className="sim-avatar">{agent.agent_name?.[0] || "S"}</div>
+                  <span className="sim-ring sim-ring-1" />
+                  <span className="sim-ring sim-ring-2" />
+                  <span className="sim-ring sim-ring-3" />
+                </div>
+                <div className="sim-callname">Appel entrant</div>
+                <div className="sim-callfrom">{agent.agent_name || "Sabrina"} · {agent.name}</div>
+                <div className="sim-callnum">{agent.phone}</div>
+
+                <div className="sim-ringing-actions">
+                  <button className="sim-action-btn decline" onClick={onClose} aria-label="Refuser">
+                    <span>✕</span>
+                  </button>
+                  <button className="sim-action-btn accept" onClick={answer} aria-label="Decrocher">
+                    <span>✓</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {phase === "active" && (
+              <>
+                <div className="sim-active-head">
+                  <div className="sim-avatar-active" style={{ borderColor: STATUS_COLOR[status] }}>
+                    {agent.agent_name?.[0] || "S"}
+                  </div>
+                  <div className="sim-active-name">{agent.agent_name || "Sabrina"}</div>
+                  <div className="sim-active-sub">{agent.name}</div>
+                  <div className="sim-timer">{formatDuration(duration)}</div>
+                </div>
+
+                <AudioBars active={status === "listening" || status === "speaking"} />
+
+                <div className="sim-status-pill" style={{ background: "color-mix(in srgb, " + STATUS_COLOR[status] + " 15%, transparent)", borderColor: "color-mix(in srgb, " + STATUS_COLOR[status] + " 35%, transparent)", color: STATUS_COLOR[status] }}>
+                  <span className="dot" style={{ background: STATUS_COLOR[status] }} />
+                  {STATUS_LABEL[status]}
+                </div>
+
+                <div className="sim-actions">
+                  {hasSR && (
+                    <button className="sim-action-btn mic" disabled={status !== "waiting"} onClick={listen}
+                      title="Appuyer pour parler">
+                      🎤
+                    </button>
+                  )}
+                  <button className="sim-action-btn hangup" onClick={hangup} title="Raccrocher">
+                    📵
+                  </button>
+                </div>
+              </>
+            )}
+
+            {phase === "ended" && (
+              <div className="sim-ended">
+                <div className="sim-ended-icon">✓</div>
+                <div className="sim-ended-title">Appel termine</div>
+                <div className="sim-ended-sub">Duree : {formatDuration(duration)} · {msgs.filter(m => m.role !== "system").length} messages</div>
+                <div className="sim-ringing-actions" style={{ marginTop: 30 }}>
+                  <button className="sim-action-btn decline" onClick={onClose}>Fermer</button>
+                  <button className="sim-action-btn accept" onClick={() => {
+                    setPhase("ringing"); setMsgs([]); apiHist.current = []; setStatus("waiting");
+                    callStart.current = null; setDuration(0); setTransferred(false);
+                  }}>Rappeler</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ═══ PANNEAU DROIT : TRANSCRIPT + OUTILS ═══ */}
+        {phase === "active" && (
+          <div className="sim-side">
+            <div className="sim-side-head">
+              <div>
+                <div className="sim-side-title">Conversation en direct</div>
+                <div className="sim-side-sub">Transcript temps reel</div>
+              </div>
+              <div className="sim-side-stats">
+                <div className="sim-stat-num">{msgs.filter(m => m.role !== "system").length}</div>
+                <div className="sim-stat-label">messages</div>
+              </div>
+            </div>
+
+            <div className="sim-transcript">
+              {msgs.length === 0 && (
+                <div className="sim-empty">L'appel commence...</div>
+              )}
+              {msgs.map((m, i) => (
+                <div key={i} className={"sim-msg sim-msg-" + (m.kind === "system" ? "system" : m.role)}>
+                  {m.kind !== "system" && (
+                    <div className="sim-msg-meta">
+                      <span className="sim-msg-author">{m.role === "user" ? "Client" : (m.kind === "transfer" ? "Transfert" : (agent.agent_name || "Sabrina"))}</span>
+                      <span className="sim-msg-time">{m.ts}</span>
+                    </div>
+                  )}
+                  <div className={"sim-msg-bubble" + (m.kind === "calendly" ? " calendly" : "") + (m.kind === "transfer" ? " transfer" : "")}>
+                    {m.content}
+                    {m.kind === "calendly" && m.link && (
+                      <a href={m.link} target="_blank" rel="noreferrer" className="sim-msg-link">Ouvrir le lien ↗</a>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div ref={msgEnd} />
+            </div>
+
+            {/* Outils rapides */}
+            <div className="sim-tools">
+              {agent.calendly_url && (
+                <button className="sim-tool" onClick={sendCalendly} disabled={status !== "waiting"}>
+                  📅 Envoyer Calendly
+                </button>
+              )}
+              {agent.escalation_phone && !transferred && (
+                <button className="sim-tool danger" onClick={transferToHuman} disabled={status !== "waiting"}>
+                  ↗ Transferer humain
+                </button>
+              )}
+            </div>
+
+            {/* Input texte */}
+            <div className="sim-input-row">
+              <input
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && sendText()}
+                placeholder="Taper un message (ou utilise le micro)..."
+                disabled={status !== "waiting"}
+                className="sim-input"
+              />
+              <button onClick={sendText} disabled={!input.trim() || status !== "waiting"} className="sim-send">→</button>
+            </div>
+          </div>
+        )}
+
+        {/* Side panel "ended" : recap */}
+        {phase === "ended" && msgs.length > 0 && (
+          <div className="sim-side">
+            <div className="sim-side-head">
+              <div>
+                <div className="sim-side-title">Recap de l'appel</div>
+                <div className="sim-side-sub">Sauvegarde automatique</div>
+              </div>
+            </div>
+            <div className="sim-transcript" style={{ maxHeight: "100%" }}>
+              {msgs.map((m, i) => (
+                <div key={i} className={"sim-msg sim-msg-" + (m.kind === "system" ? "system" : m.role)}>
+                  <div className="sim-msg-meta">
+                    <span className="sim-msg-author">{m.role === "user" ? "Client" : (agent.agent_name || "Sabrina")}</span>
+                    <span className="sim-msg-time">{m.ts}</span>
+                  </div>
+                  <div className="sim-msg-bubble">{m.content}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}

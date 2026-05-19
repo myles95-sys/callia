@@ -1,0 +1,240 @@
+import { useState } from "react";
+
+export default function DeployTab() {
+  const [tab, setTab] = useState("twilio");
+
+  const Code = ({ children }) => (
+    <pre style={{ background:"#0d1117", borderRadius:8, padding:"14px 16px", fontSize:11.5, lineHeight:1.7, color:"#e6edf3", overflowX:"auto", margin:"10px 0" }}>
+      <code>{children}</code>
+    </pre>
+  );
+
+  const twilioCode = `// ── server.js — Twilio (France, Europe, USA, international) ─────────
+// Le backend /api/chat de cette app fait déjà l'appel à Claude pour toi.
+// Il te suffit de brancher Twilio dessus.
+
+const express = require('express');
+const twilio  = require('twilio');
+const app     = express();
+app.use(express.urlencoded({ extended: false }));
+
+const API_URL = process.env.API_URL; // https://votre-app.com
+const sessions = {};                  // historique par CallSid
+
+// 1. Twilio appelle ce webhook quand un client compose votre numéro
+app.post('/voice', (req, res) => {
+  const twiml  = new twilio.twiml.VoiceResponse();
+  const gather = twiml.gather({
+    input: 'speech',
+    language: 'fr-FR',
+    speechTimeout: 'auto',
+    action: '/respond',
+  });
+  gather.say({ language:'fr-FR', voice:'Polly.Lea' },
+    'Bonjour, Callia à l\\'appareil. Que puis-je faire pour vous ?');
+  res.type('text/xml').send(twiml.toString());
+});
+
+// 2. Réponse du client → appel à /api/chat de Callia
+app.post('/respond', async (req, res) => {
+  const callSid    = req.body.CallSid;
+  const userSpeech = req.body.SpeechResult;
+  if (!sessions[callSid]) sessions[callSid] = [];
+
+  const r = await fetch(\`\${API_URL}/api/chat\`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      system: process.env.CALLIA_PROMPT,  // récupéré depuis votre agent
+      messages: sessions[callSid],
+      userMessage: userSpeech,
+    }),
+  });
+  const { reply } = await r.json();
+
+  sessions[callSid].push(
+    { role:'user', content:userSpeech },
+    { role:'assistant', content:reply }
+  );
+
+  const twiml  = new twilio.twiml.VoiceResponse();
+  const gather = twiml.gather({ input:'speech', language:'fr-FR', action:'/respond' });
+  gather.say({ language:'fr-FR', voice:'Polly.Lea' }, reply);
+  res.type('text/xml').send(twiml.toString());
+});
+
+app.listen(3000, () => console.log('Callia × Twilio sur :3000'));
+
+// ── Variables d'environnement (.env) ─────────────────────────────────
+// API_URL=https://votre-sabrina-app.com
+// CALLIA_PROMPT=<récupéré depuis le tableau de bord Callia>
+// ── Déploiement : Railway / Render / Fly.io en 2 clics ──────────────`;
+
+  const atCode = `// ── server.js — Africa's Talking (Afrique de l'Ouest/Centrale) ──────
+// Recommandé pour : RDC, Sénégal, Côte d'Ivoire, Cameroun, Mali, Bénin
+// Avantages : numéros locaux disponibles directement, tarifs 3-5× moins
+// chers que Twilio depuis l'Afrique, support USSD/SMS/Mobile Money intégré
+
+const express = require('express');
+const app     = express();
+app.use(express.urlencoded({ extended: false }));
+app.use(express.json());
+
+const API_URL  = process.env.API_URL;
+const sessions = {};
+
+// 1. L'appelant est connecté — Callia se présente
+app.post('/at-voice', (req, res) => {
+  const xml = \`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="woman" playBeep="false">
+    Bonjour, Callia à l'appareil. Que puis-je faire pour vous ?
+  </Say>
+  <Record finishOnKey="#" maxLength="15" trimSilence="true"
+          callbackUrl="\${API_URL}/at-process" />
+</Response>\`;
+  res.set('Content-Type', 'application/xml').send(xml);
+});
+
+// 2. Transcription de l'audio puis appel à Claude
+app.post('/at-process', async (req, res) => {
+  const sessionId    = req.body.sessionId;
+  const recordingUrl = req.body.recordingUrl;
+  const userText     = await transcribeAudio(recordingUrl);
+  // → Whisper API, AssemblyAI ou Google Speech-to-Text
+
+  if (!sessions[sessionId]) sessions[sessionId] = [];
+
+  const r = await fetch(\`\${API_URL}/api/chat\`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      system: process.env.CALLIA_PROMPT,
+      messages: sessions[sessionId],
+      userMessage: userText,
+    }),
+  });
+  const { reply } = await r.json();
+
+  sessions[sessionId].push(
+    { role:'user', content:userText },
+    { role:'assistant', content:reply }
+  );
+
+  const xml = \`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="woman">\${reply}</Say>
+  <Record finishOnKey="#" maxLength="15" trimSilence="true"
+          callbackUrl="\${API_URL}/at-process" />
+</Response>\`;
+  res.set('Content-Type', 'application/xml').send(xml);
+});
+
+app.listen(3000);`;
+
+  const whatsappCode = `// ── WhatsApp Business API (Meta) ────────────────────────────────────
+// LE canal #1 en Afrique francophone et tout aussi efficace en Europe.
+// Plus de réticence à appeler un numéro inconnu : tout passe par WA.
+
+const express = require('express');
+const axios   = require('axios');
+const app     = express();
+app.use(express.json());
+
+const API_URL  = process.env.API_URL;
+const sessions = {};
+
+// Webhook de vérification Meta (une fois au setup)
+app.get('/webhook', (req, res) => {
+  if (req.query['hub.verify_token'] === process.env.WA_VERIFY_TOKEN)
+    return res.send(req.query['hub.challenge']);
+  res.sendStatus(403);
+});
+
+// Réception des messages WhatsApp
+app.post('/webhook', async (req, res) => {
+  const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+  if (!msg || msg.type !== 'text') return res.sendStatus(200);
+
+  const from = msg.from;
+  const text = msg.text.body;
+  if (!sessions[from]) sessions[from] = [];
+
+  const r = await fetch(\`\${API_URL}/api/chat\`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      system: process.env.CALLIA_PROMPT,
+      messages: sessions[from],
+      userMessage: text,
+    }),
+  });
+  const { reply } = await r.json();
+  sessions[from].push({ role:'user', content:text }, { role:'assistant', content:reply });
+
+  // Envoi de la réponse WhatsApp
+  await axios.post(
+    \`https://graph.facebook.com/v18.0/\${process.env.WA_PHONE_ID}/messages\`,
+    { messaging_product:'whatsapp', to:from, type:'text', text:{ body:reply } },
+    { headers:{ Authorization:\`Bearer \${process.env.WA_TOKEN}\` } }
+  );
+  res.sendStatus(200);
+});
+
+app.listen(3000);`;
+
+  const TABS = [
+    { id:"twilio", label:"Twilio (international)", flag:"🌍",
+      hint:"Recommandé pour France, Belgique, Suisse, Canada — couverture mondiale." },
+    { id:"at",     label:"Africa's Talking",       flag:"🌍",
+      hint:"3-5× moins cher en Afrique de l'Ouest/Centrale. Numéros locaux RDC, CI, SN…" },
+    { id:"wa",     label:"WhatsApp Business",      flag:"💬",
+      hint:"Le canal le plus utilisé partout — moins de friction qu'un appel vocal." },
+  ];
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ background:"#E1F5EE", border:"0.5px solid #9FE1CB", borderRadius:"var(--border-radius-lg, 12px)", padding:"14px 16px" }}>
+        <div style={{ fontSize:14, fontWeight:600, color:"#085041", marginBottom:6 }}>🚀 De la démo au vrai numéro de téléphone</div>
+        <p style={{ fontSize:13, color:"#0F6E56", margin:0, lineHeight:1.6 }}>
+          Le simulateur de cette plateforme est <strong>100% fonctionnel</strong> : c'est exactement le même backend qui traitera les vrais appels.
+          Pour connecter ton agent à un vrai numéro, choisis l'opérateur ci-dessous selon ton pays et déploie le code (Railway, Render, Fly.io — gratuit pour démarrer).
+        </p>
+      </div>
+
+      <div style={{ display:"flex", gap:0, borderRadius:"var(--border-radius-md, 8px)", overflow:"hidden", border:"0.5px solid var(--color-border-tertiary, #e5e7eb)" }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ flex:1, padding:"10px 8px", fontSize:12, fontWeight:500, border:"none", cursor:"pointer", textAlign:"center",
+              background:tab===t.id?"#0F6E56":"var(--color-background-secondary, #f9fafb)",
+              color:tab===t.id?"#fff":"var(--color-text-secondary, #666)" }}>
+            {t.flag} {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ fontSize:12, color:"var(--color-text-secondary, #666)", padding:"2px 4px" }}>
+        💡 {TABS.find(t => t.id === tab)?.hint}
+      </div>
+
+      {tab === "twilio" && <Code>{twilioCode}</Code>}
+      {tab === "at"     && <Code>{atCode}</Code>}
+      {tab === "wa"     && <Code>{whatsappCode}</Code>}
+
+      <h3 style={{ fontSize:14, fontWeight:600, margin:"8px 0 0", color:"var(--color-text-primary, #111)" }}>3 étapes pour passer en production</h3>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+        {[
+          { step:"1", title:"Compte opérateur", desc:"Twilio, Africa's Talking ou Meta Business — 5 min de setup" },
+          { step:"2", title:"Déploie le code", desc:"Railway / Render / Fly.io — gratuit jusqu'à 500h/mois" },
+          { step:"3", title:"Configure le webhook", desc:"Colle l'URL de ton serveur dans le dashboard de l'opérateur" },
+        ].map(s => (
+          <div key={s.step} style={{ background:"var(--color-background-primary, #fff)", border:"0.5px solid var(--color-border-tertiary, #e5e7eb)", borderRadius:"var(--border-radius-md, 8px)", padding:"14px" }}>
+            <div style={{ fontSize:22, fontWeight:700, color:"#0F6E56", marginBottom:4 }}>{s.step}</div>
+            <div style={{ fontSize:13, fontWeight:500, marginBottom:3, color:"var(--color-text-primary, #111)" }}>{s.title}</div>
+            <div style={{ fontSize:12, color:"var(--color-text-secondary, #666)", lineHeight:1.5 }}>{s.desc}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

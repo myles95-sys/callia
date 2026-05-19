@@ -1,0 +1,147 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   SabrinaAI — Système de design futuriste (dark mode)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ─── Couleurs ─── */
+  --bg-0:           #05070d;   /* fond très sombre */
+  --bg-1:           #0a0e1a;   /* fond panneaux */
+  --bg-2:           #111729;   /* fond cards */
+  --bg-3:           #1a2138;   /* fond cards survolées */
+
+  --line:           rgba(255, 255, 255, 0.07);
+  --line-strong:    rgba(255, 255, 255, 0.14);
+
+  --text:           #e8eaf0;
+  --text-dim:       #9aa3b8;
+  --text-faint:     #6b7280;
+
+  --accent:         #00e09d;   /* vert néon (signature SabrinaAI) */
+  --accent-glow:    rgba(0, 224, 157, 0.45);
+  --accent-soft:    rgba(0, 224, 157, 0.12);
+
+  --violet:         #a855f7;   /* violet électrique */
+  --violet-glow:    rgba(168, 85, 247, 0.4);
+
+  --cyan:           #06b6d4;   /* cyan profond */
+  --cyan-glow:      rgba(6, 182, 212, 0.4);
+
+  --magenta:        #ec4899;
+  --warn:           #f59e0b;
+  --error:          #ef4444;
+
+  /* Compat avec composants existants */
+  --color-text-primary:    var(--text);
+  --color-text-secondary:  var(--text-dim);
+  --color-text-tertiary:   var(--text-faint);
+  --color-background-primary:   var(--bg-2);
+  --color-background-secondary: var(--bg-1);
+  --color-border-tertiary:      var(--line);
+  --border-radius-md: 10px;
+  --border-radius-lg: 14px;
+
+  /* ─── Typography ─── */
+  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --heading: 'Inter', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg-0);
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.005em;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg-0);
+  overflow-x: hidden;
+}
+
+#root {
+  width: 100%;
+  min-height: 100svh;
+  text-align: left;
+  background: var(--bg-0);
+}
+
+/* ─── Typographie ─── */
+h1, h2, h3, h4 {
+  font-family: var(--heading);
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+h1 { font-size: clamp(2.4rem, 5.5vw, 4.5rem); line-height: 1.05; }
+h2 { font-size: clamp(1.8rem, 3.5vw, 2.8rem); line-height: 1.15; }
+h3 { font-size: clamp(1.2rem, 2vw, 1.6rem); line-height: 1.25; }
+
+p  { margin: 0; }
+
+a { color: inherit; text-decoration: none; }
+
+code, .mono {
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+
+/* ─── Scrollbar custom ─── */
+::-webkit-scrollbar         { width: 10px; height: 10px; }
+::-webkit-scrollbar-track   { background: var(--bg-0); }
+::-webkit-scrollbar-thumb   { background: var(--line-strong); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* ─── Sélection texte ─── */
+::selection { background: var(--accent-glow); color: var(--text); }
+
+/* ─── Boutons primaires (utilisé partout) ─── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent) 0%, #00b380 100%);
+  color: #001a12;
+  box-shadow: 0 0 0 1px var(--accent-glow), 0 10px 30px -10px var(--accent-glow);
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 1px var(--accent), 0 16px 40px -8px var(--accent-glow), 0 0 60px var(--accent-glow);
+}
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  backdrop-filter: blur(10px);
+}
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--text-dim);
+}
+.btn-ghost:hover { color: var(--text); }

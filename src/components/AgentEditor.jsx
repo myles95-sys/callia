@@ -1,0 +1,255 @@
+import { useState } from "react";
+import { createAgent, updateAgent, SECTORS, COUNTRIES } from "../lib/agents.js";
+
+const INPUT = {
+  width: "100%", padding: "10px 12px", fontSize: 13, border: "1px solid #d1d5db",
+  borderRadius: 8, fontFamily: "inherit", boxSizing: "border-box", background: "#fff", color: "#111"
+};
+const LABEL = { display: "block", fontSize: 12, color: "var(--color-text-secondary, #444)", marginBottom: 4, fontWeight: 500 };
+const FIELD = { marginBottom: 14 };
+
+const LANGUAGES = [
+  { code: "fr-FR", label: "Français",        flag: "🇫🇷" },
+  { code: "en-US", label: "English",         flag: "🇬🇧" },
+  { code: "es-ES", label: "Español",         flag: "🇪🇸" },
+  { code: "ar-MA", label: "العربية",         flag: "🇲🇦" },
+  { code: "de-DE", label: "Deutsch",         flag: "🇩🇪" },
+  { code: "it-IT", label: "Italiano",        flag: "🇮🇹" },
+  { code: "pt-PT", label: "Português",       flag: "🇵🇹" },
+  { code: "nl-NL", label: "Nederlands",      flag: "🇳🇱" },
+];
+
+export default function AgentEditor({ initial, onSaved, onCancel }) {
+  const editing = Boolean(initial?.id);
+  const [form, setForm] = useState({
+    name:             initial?.name || "",
+    sector:           initial?.sector || SECTORS[0],
+    description:      initial?.description || "",
+    services:         initial?.services || "",
+    hours:            initial?.hours || "",
+    address:          initial?.address || "",
+    phone:            initial?.phone || "",
+    country_code:     initial?.country_code || "FR",
+    language:         initial?.language || "fr-FR",
+    agent_name:       initial?.agent_name || "Callia",
+    tone:             initial?.tone || "chaleureux",
+    greeting:         initial?.greeting || "",
+    calendly_url:     initial?.calendly_url || "",
+    escalation_phone: initial?.escalation_phone || "",
+    active:           initial?.active !== undefined ? initial.active : true,
+  });
+  const [faqs, setFaqs] = useState(
+    initial?.faqs?.length
+      ? initial.faqs.map(f => ({ question: f.question, answer: f.answer }))
+      : [{ question: "", answer: "" }]
+  );
+  const [saving, setSaving] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const [error, setError] = useState("");
+
+  const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const updFaq = (i, k, v) => setFaqs(fs => fs.map((f, idx) => idx === i ? { ...f, [k]: v } : f));
+  const addFaq = () => setFaqs(fs => [...fs, { question: "", answer: "" }]);
+  const rmFaq  = (i) => setFaqs(fs => fs.filter((_, idx) => idx !== i));
+
+
+  const suggestFaqs = async () => {
+    if (!form.sector || !form.description.trim()) {
+      setError("Remplis d'abord secteur et description pour suggerer des FAQ.");
+      return;
+    }
+    setSuggesting(true);
+    setError("");
+    try {
+      const res = await fetch("/api/suggest-faqs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sector: form.sector, description: form.description, name: form.name }),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      if (data.faqs && data.faqs.length > 0) {
+        // Fusionner : on ajoute les nouvelles sans ecraser celles dej remplies
+        const existing = faqs.filter(f => f.question.trim() && f.answer.trim());
+        setFaqs([...existing, ...data.faqs]);
+      } else {
+        setError("Aucune suggestion recue. Re-essaie.");
+      }
+    } catch (e) {
+      setError("Echec de la suggestion : " + (e.message || "erreur"));
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const save = async () => {
+    setError("");
+    if (!form.name.trim()) { setError("Le nom de l'entreprise est requis."); return; }
+    if (!form.description.trim()) { setError("Une description courte est requise - l'IA s'en servira."); return; }
+    setSaving(true);
+    try {
+      const cleanFaqs = faqs.filter(f => f.question.trim() && f.answer.trim());
+      if (editing) {
+        await updateAgent(initial.id, form, cleanFaqs);
+      } else {
+        await createAgent(form, cleanFaqs);
+      }
+      onSaved?.();
+    } catch (e) {
+      setError(e.message || "Echec de la sauvegarde.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="glass-card" style={{ padding: 28 }}>
+      <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 6px", color: "var(--text)" }}>
+        {editing ? "Modifier l'agent" : "Creer un nouvel agent IA"}
+      </h2>
+      <p style={{ fontSize: 13, color: "var(--text-dim)", margin: "0 0 24px" }}>
+        Plus tu donnes d'informations, mieux l'agent repondra a tes clients.
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+        <div style={FIELD}>
+          <label style={LABEL}>Nom de l'entreprise *</label>
+          <input style={INPUT} value={form.name} onChange={e => update("name", e.target.value)} placeholder="Boulangerie Le Croissant Dore" />
+        </div>
+        <div style={FIELD}>
+          <label style={LABEL}>Secteur d'activite *</label>
+          <select style={INPUT} value={form.sector} onChange={e => update("sector", e.target.value)}>
+            {SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div style={FIELD}>
+        <label style={LABEL}>Description courte (utilisee par l'IA) *</label>
+        <textarea style={{ ...INPUT, minHeight: 60, resize: "vertical" }} value={form.description} onChange={e => update("description", e.target.value)}
+          placeholder="Boulangerie artisanale au coeur de Lyon, pains au levain et patisseries faites maison." />
+      </div>
+
+      <div style={FIELD}>
+        <label style={LABEL}>Services proposes *</label>
+        <textarea style={{ ...INPUT, minHeight: 60, resize: "vertical" }} value={form.services} onChange={e => update("services", e.target.value)}
+          placeholder="Pains traditionnels, viennoiseries, sandwichs, plateaux..." />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div style={FIELD}>
+          <label style={LABEL}>Horaires d'ouverture</label>
+          <input style={INPUT} value={form.hours} onChange={e => update("hours", e.target.value)} placeholder="Lun-Sam 9h-19h" />
+        </div>
+        <div style={FIELD}>
+          <label style={LABEL}>Adresse</label>
+          <input style={INPUT} value={form.address} onChange={e => update("address", e.target.value)} placeholder="12 rue Merciere, 69002 Lyon" />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 14 }}>
+        <div style={FIELD}>
+          <label style={LABEL}>Pays</label>
+          <select style={INPUT} value={form.country_code} onChange={e => update("country_code", e.target.value)}>
+            {COUNTRIES.map(c => <option key={c.code} value={c.code}>{c.name} ({c.dial})</option>)}
+          </select>
+        </div>
+        <div style={FIELD}>
+          <label style={LABEL}>Numero de telephone affiche</label>
+          <input style={INPUT} value={form.phone} onChange={e => update("phone", e.target.value)}
+            placeholder={(COUNTRIES.find(c => c.code === form.country_code)?.dial || "+33") + " 1 23 45 67 89"} />
+        </div>
+      </div>
+
+      <h3 style={{ fontSize: 14, fontWeight: 600, margin: "22px 0 8px", color: "var(--text)" }}>Personnalite de l'agent</h3>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div style={FIELD}>
+          <label style={LABEL}>Prenom de l'agent</label>
+          <input style={INPUT} value={form.agent_name} onChange={e => update("agent_name", e.target.value)} placeholder="Callia" />
+        </div>
+        <div style={FIELD}>
+          <label style={LABEL}>Ton de l'agent</label>
+          <select style={INPUT} value={form.tone} onChange={e => update("tone", e.target.value)}>
+            <option value="chaleureux">Chaleureux et amical</option>
+            <option value="formel">Professionnel et formel</option>
+            <option value="direct">Direct et efficace</option>
+          </select>
+        </div>
+      </div>
+
+      <div style={FIELD}>
+        <label style={LABEL}>Langue parlée par l'agent</label>
+        <select style={INPUT} value={form.language} onChange={e => update("language", e.target.value)}>
+          {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.label}</option>)}
+        </select>
+      </div>
+
+      <div style={FIELD}>
+        <label style={LABEL}>Phrase d'accueil personnalisee (optionnel)</label>
+        <input style={INPUT} value={form.greeting} onChange={e => update("greeting", e.target.value)}
+          placeholder="Laisse vide pour utiliser la phrase par defaut" />
+      </div>
+
+      <h3 style={{ fontSize: 14, fontWeight: 600, margin: "22px 0 4px", color: "var(--text)" }}>Integrations</h3>
+      <p style={{ fontSize: 12, color: "var(--text-dim)", margin: "0 0 14px" }}>
+        L'agent prendra des RDV automatiquement et transferera vers un humain quand necessaire.
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div style={FIELD}>
+          <label style={LABEL}>Lien Calendly (prise de RDV)</label>
+          <input style={INPUT} type="url" value={form.calendly_url} onChange={e => update("calendly_url", e.target.value)}
+            placeholder="https://calendly.com/votre-compte/rdv" />
+        </div>
+        <div style={FIELD}>
+          <label style={LABEL}>Numero pour transfert humain</label>
+          <input style={INPUT} type="tel" value={form.escalation_phone} onChange={e => update("escalation_phone", e.target.value)}
+            placeholder="+33 6 12 34 56 78" />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", margin: "22px 0 4px" }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0, color: "var(--text)" }}>FAQ - Questions frequentes</h3>
+        <button type="button" onClick={suggestFaqs} disabled={suggesting}
+          style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, background: "linear-gradient(135deg, var(--accent), var(--cyan))", color: "#001a12", border: "none", borderRadius: 999, cursor: suggesting ? "wait" : "pointer", fontFamily: "inherit", boxShadow: "0 4px 14px -4px var(--accent-glow)", opacity: suggesting ? 0.6 : 1 }}>
+          {suggesting ? "Generation..." : "Suggerer 10 FAQ par IA"}
+        </button>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--text-dim)", margin: "0 0 12px" }}>
+        Liste les questions les plus posees par tes clients. L'IA y repondra exactement comme tu l'ecris ici.
+      </p>
+
+      {faqs.map((f, i) => (
+        <div key={i} style={{ padding: 14, background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: 10, marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--accent)" }}>Q{i + 1}</span>
+            {faqs.length > 1 && (
+              <button onClick={() => rmFaq(i)} style={{ background: "transparent", border: "none", color: "#f87171", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Supprimer</button>
+            )}
+          </div>
+          <input style={{ ...INPUT, marginBottom: 6, fontSize: 12 }} value={f.question} onChange={e => updFaq(i, "question", e.target.value)} placeholder="Question (ex : Faites-vous des livraisons ?)" />
+          <textarea style={{ ...INPUT, minHeight: 50, fontSize: 12, resize: "vertical" }} value={f.answer} onChange={e => updFaq(i, "answer", e.target.value)} placeholder="Reponse exacte que l'IA donnera" />
+        </div>
+      ))}
+
+      <button onClick={addFaq}
+        style={{ background: "transparent", border: "1px dashed var(--accent)", color: "var(--accent)", padding: "8px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer", marginTop: 4, fontFamily: "inherit" }}>
+        + Ajouter une question
+      </button>
+
+      {error && (
+        <div style={{ color: "#fca5a5", fontSize: 12, marginTop: 14, padding: "10px 14px", background: "rgba(239,68,68,0.1)", borderRadius: 8, border: "1px solid rgba(239,68,68,0.2)" }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, marginTop: 24, justifyContent: "flex-end" }}>
+        <button onClick={onCancel} className="btn btn-secondary">Annuler</button>
+        <button onClick={save} disabled={saving} className="btn btn-primary">
+          {saving ? "Enregistrement..." : (editing ? "Enregistrer" : "Creer l'agent")}
+        </button>
+      </div>
+    </div>
+  );
+}
