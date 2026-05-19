@@ -4,7 +4,6 @@ import { checkBackendHealth } from "./lib/api.js";
 import AuthScreen      from "./components/AuthScreen.jsx";
 import Dashboard       from "./components/Dashboard.jsx";
 import AgentEditor     from "./components/AgentEditor.jsx";
-import DeployTab       from "./components/DeployTab.jsx";
 import PhoneSimulator  from "./components/PhoneSimulator.jsx";
 import LandingPage     from "./components/LandingPage.jsx";
 import StatsTab        from "./components/StatsTab.jsx";
@@ -188,7 +187,6 @@ export default function App() {
   const TABS = [
     { id: "dashboard", label: "Mes agents" },
     { id: "stats",     label: "Statistiques" },
-    { id: "deploy",    label: "Déployer en production" },
     ...(isAdmin ? [{ id: "admin", label: "🛡 Admin" }] : []),
   ];
 
@@ -268,7 +266,6 @@ export default function App() {
           />
         )}
         {tab === "stats"  && <StatsTab />}
-        {tab === "deploy" && <DeployTab />}
         {tab === "admin"  && isAdmin && <AdminPanel />}
 
         {showOnboarding && (
@@ -376,7 +373,6 @@ function Header({ userEmail, onSignOut, demoMode, health, onHome, theme, onToggl
         {userEmail && (
           <>
             <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{userEmail}</span>
-            <button onClick={onToggleTheme} className="theme-toggle" title={theme === "dark" ? "Mode clair" : "Mode sombre"}>{theme === "dark" ? "☀" : "☽"}</button>
             <button onClick={onSignOut} title="Se deconnecter" style={{
               background: "transparent",
               border: "1px solid var(--line)",

@@ -2555,7 +2555,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 14px 9px 11px;
+  padding: 9px 30px 9px 11px;
   max-width: 320px;
   background: rgba(10, 14, 26, 0.7);
   backdrop-filter: blur(14px);

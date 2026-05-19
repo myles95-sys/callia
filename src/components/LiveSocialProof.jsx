@@ -76,17 +76,22 @@ export default function LiveSocialProof({ delay = 4000, interval = 7000 }) {
   const [events] = useState(() => generateEvents(40));
   const [idx, setIdx] = useState(-1);    // -1 = pas encore affiché
   const [visible, setVisible] = useState(false);
+  const [dismissed, setDismissed] = useState(() => {
+    try { return sessionStorage.getItem("callia_proof_dismissed") === "1"; } catch { return false; }
+  });
 
   useEffect(() => {
+    if (dismissed) return;
     // Affichage initial après le délai
     const t0 = setTimeout(() => {
       setIdx(0);
       setVisible(true);
     }, delay);
     return () => clearTimeout(t0);
-  }, [delay]);
+  }, [delay, dismissed]);
 
   useEffect(() => {
+    if (dismissed) return;
     if (idx < 0) return;
     // Cache après 5s, puis affiche le suivant après interval - 5s
     const hideAt = setTimeout(() => setVisible(false), 5500);
@@ -95,9 +100,15 @@ export default function LiveSocialProof({ delay = 4000, interval = 7000 }) {
       setVisible(true);
     }, interval);
     return () => { clearTimeout(hideAt); clearTimeout(nextAt); };
-  }, [idx, events.length, interval]);
+  }, [idx, events.length, interval, dismissed]);
 
-  if (idx < 0) return null;
+  const close = () => {
+    setDismissed(true);
+    setVisible(false);
+    try { sessionStorage.setItem("callia_proof_dismissed", "1"); } catch {}
+  };
+
+  if (dismissed || idx < 0) return null;
   const evt = events[idx];
 
   return (
@@ -108,6 +119,34 @@ export default function LiveSocialProof({ delay = 4000, interval = 7000 }) {
         <div className="live-proof-text">{evt.text}</div>
         <div className="live-proof-sub">{evt.sub}</div>
       </div>
+      <button
+        onClick={close}
+        aria-label="Fermer"
+        className="live-proof-close"
+        style={{
+          position: "absolute",
+          top: 6,
+          right: 8,
+          width: 22,
+          height: 22,
+          border: "none",
+          background: "rgba(255,255,255,0.08)",
+          color: "var(--text-dim)",
+          borderRadius: "50%",
+          cursor: "pointer",
+          fontSize: 13,
+          lineHeight: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 0,
+          fontFamily: "inherit",
+        }}
+        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.16)"}
+        onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.08)"}
+      >
+        ×
+      </button>
     </div>
   );
 }
