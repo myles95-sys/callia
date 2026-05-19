@@ -833,6 +833,48 @@
   .sim-stage { grid-template-columns: 1fr; height: auto; max-width: 480px; }
 }
 
+/* ─── MOBILE FIX : permettre de scroller pour voir la conversation ─────── */
+@media (max-width: 768px) {
+  .sim-overlay {
+    align-items: flex-start;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px 12px 60px;
+  }
+  .sim-stage {
+    height: auto;
+    min-height: 0;
+    gap: 16px;
+    padding-bottom: 20px;
+  }
+  .sim-phone {
+    width: 100%;
+    max-width: 360px;
+    margin: 0 auto;
+  }
+  /* Hauteur du téléphone limitée pour laisser voir le transcript en dessous */
+  .sim-phone-inner {
+    min-height: 480px;
+  }
+  .sim-side {
+    overflow: visible;   /* le scroll est désormais géré par .sim-overlay */
+    width: 100%;
+    padding: 16px;
+  }
+  .sim-transcript {
+    max-height: 50vh;     /* limite raisonnable, le reste scrolle dans la page */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sim-close {
+    top: 12px; right: 12px;
+    width: 36px; height: 36px;
+    font-size: 20px;
+    position: fixed;       /* reste accessible en haut même quand on scrolle */
+  }
+}
+
 /* ─── PHONE (panneau gauche) ────────────────────────────────────────────── */
 .sim-phone {
   position: relative;

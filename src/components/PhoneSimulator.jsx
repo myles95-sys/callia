@@ -29,34 +29,53 @@ function waitForVoices(timeoutMs = 1500) {
   });
 }
 
+// Note un score de qualité à chaque voix (plus c'est haut, mieux c'est)
+function scoreVoice(v, lang) {
+  let score = 0;
+  // +50 si NETWORK voice (Google WaveNet/Neural) — sur Android c'est ÉNORME
+  if (v.localService === false) score += 50;
+  // +30 si la locale matche exactement (fr-FR)
+  if (v.lang === lang) score += 30;
+  else if (v.lang.startsWith(lang.split("-")[0])) score += 15;
+  // +25 si Google (les voix Google sont de loin les meilleures)
+  if (/google/i.test(v.name)) score += 25;
+  // +20 si féminine détectée
+  if (FEMALE_VOICE_PATTERNS.test(v.name)) score += 20;
+  // -40 si masculine détectée (pénalité forte)
+  if (MALE_VOICE_PATTERNS.test(v.name)) score -= 40;
+  // +15 si neural/wavenet/premium dans le nom (qualité élevée)
+  if (/neural|wavenet|premium|enhanced|natural/i.test(v.name)) score += 15;
+  // -10 si compact/eloquence (synthèses basse qualité Apple/IBM)
+  if (/compact|eloquence/i.test(v.name)) score -= 10;
+  // +10 si "default" (souvent la voix de référence)
+  if (v.default) score += 10;
+  return score;
+}
+
 function pickBestVoice(voices, lang) {
+  if (!voices.length) return null;
+  // Vérifie si l'utilisateur a sauvegardé une préférence
+  try {
+    const savedURI = localStorage.getItem("callia_voice_uri");
+    if (savedURI) {
+      const saved = voices.find(v => v.voiceURI === savedURI);
+      if (saved) return saved;
+    }
+  } catch (_) {}
+
+  // Sinon, score toutes les voix et prends la meilleure
   const langCode = lang.split("-")[0];
-  // Filtre voix pour la bonne langue
-  const sameLang = voices.filter(v => v.lang === lang);
-  const sameLangFamily = voices.filter(v => v.lang.startsWith(langCode));
+  const candidates = voices.filter(v => v.lang === lang || v.lang.startsWith(langCode));
+  if (!candidates.length) return voices[0];
+  return candidates.sort((a, b) => scoreVoice(b, lang) - scoreVoice(a, lang))[0];
+}
 
-  // 1. Voix féminine explicite dans la bonne locale
-  let pick = sameLang.find(v => FEMALE_VOICE_PATTERNS.test(v.name));
-  if (pick) return pick;
-
-  // 2. Voix féminine dans la famille de langue (ex fr-CA pour fr-FR)
-  pick = sameLangFamily.find(v => FEMALE_VOICE_PATTERNS.test(v.name));
-  if (pick) return pick;
-
-  // 3. Google voice de qualité dans la bonne locale (souvent féminine par défaut)
-  pick = sameLang.find(v => /google/i.test(v.name) && !MALE_VOICE_PATTERNS.test(v.name));
-  if (pick) return pick;
-
-  // 4. N'importe quelle voix qui n'est PAS masculine, dans la bonne locale
-  pick = sameLang.find(v => !MALE_VOICE_PATTERNS.test(v.name));
-  if (pick) return pick;
-
-  // 5. Idem mais famille de langue
-  pick = sameLangFamily.find(v => !MALE_VOICE_PATTERNS.test(v.name));
-  if (pick) return pick;
-
-  // 6. Tant pis — n'importe quelle voix de la bonne locale
-  return sameLang[0] || sameLangFamily[0] || null;
+// Retourne la liste des voix utilisables (pour le sélecteur UI)
+function getUsableVoices(voices, lang) {
+  const langCode = lang.split("-")[0];
+  return voices
+    .filter(v => v.lang === lang || v.lang.startsWith(langCode))
+    .sort((a, b) => scoreVoice(b, lang) - scoreVoice(a, lang));
 }
 
 async function speak(text, lang = "fr-FR", onStart, onEnd) {
@@ -69,14 +88,18 @@ async function speak(text, lang = "fr-FR", onStart, onEnd) {
 
   const utt = new SpeechSynthesisUtterance(text);
   utt.lang = lang;
-  if (pick) utt.voice = pick;
+  if (pick) {
+    utt.voice = pick;
+    console.log("[Callia TTS] Voice:", pick.name, "| local:", pick.localService, "| lang:", pick.lang);
+  }
 
-  // Si on a une voix masculine (échec du picker), on monte le pitch pour féminiser
+  // Pitch boost très léger seulement si voix clairement masculine
   const isMale = pick && MALE_VOICE_PATTERNS.test(pick.name);
-  utt.pitch = isMale ? 1.4 : 1.05;
+  utt.pitch = isMale ? 1.2 : 1.0;
   // Rate plus lent sur mobile pour la clarté
   const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-  utt.rate = isMobile ? 0.95 : 1.1;
+  utt.rate = isMobile ? 0.9 : 1.05;
+  utt.volume = 1.0;
 
   utt.onstart = onStart;
   utt.onend = onEnd;
@@ -164,6 +187,10 @@ export default function PhoneSimulator({ agent, onClose, persistCalls = true }) 
   const [duration, setDuration] = useState(0);
   const [transferred, setTransferred] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [voices, setVoices] = useState([]);
+  const [selectedVoiceURI, setSelectedVoiceURI] = useState(() => {
+    try { return localStorage.getItem("callia_voice_uri") || ""; } catch { return ""; }
+  });
 
   const apiHist     = useRef([]);
   const msgEnd      = useRef(null);
@@ -174,6 +201,21 @@ export default function PhoneSimulator({ agent, onClose, persistCalls = true }) 
 
   useEffect(() => { setHasSR("webkitSpeechRecognition" in window || "SpeechRecognition" in window); }, []);
   useEffect(() => { msgEnd.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
+  // Chargement des voix dispos pour le sélecteur
+  useEffect(() => {
+    let cancelled = false;
+    waitForVoices().then(vs => {
+      if (cancelled) return;
+      const usable = getUsableVoices(vs, agent.language || "fr-FR");
+      setVoices(usable);
+    });
+    return () => { cancelled = true; };
+  }, [agent.language]);
+
+  const onVoiceChange = (uri) => {
+    setSelectedVoiceURI(uri);
+    try { uri ? localStorage.setItem("callia_voice_uri", uri) : localStorage.removeItem("callia_voice_uri"); } catch {}
+  };
   useEffect(() => {
     if (phase === "active") {
       durationTimer.current = setInterval(() => {
@@ -427,6 +469,37 @@ export default function PhoneSimulator({ agent, onClose, persistCalls = true }) 
                 </button>
               )}
             </div>
+
+            {/* Sélecteur de voix (utile sur mobile pour choisir une voix plus naturelle) */}
+            {voices.length > 1 && (
+              <div style={{ padding: "10px 14px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 6 }}>
+                <label style={{ fontSize: 11, opacity: 0.65, textTransform: "uppercase", letterSpacing: ".06em" }}>
+                  🎙 Voix utilisée
+                </label>
+                <select
+                  value={selectedVoiceURI}
+                  onChange={(e) => onVoiceChange(e.target.value)}
+                  style={{
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    color: "var(--text)",
+                    borderRadius: 8,
+                    padding: "8px 10px",
+                    fontSize: 13,
+                  }}
+                >
+                  <option value="">🎯 Automatique (meilleure qualité)</option>
+                  {voices.map(v => (
+                    <option key={v.voiceURI} value={v.voiceURI}>
+                      {v.name} {v.localService === false ? "· en ligne" : "· local"} · {v.lang}
+                    </option>
+                  ))}
+                </select>
+                <div style={{ fontSize: 11, opacity: 0.55, marginTop: 2 }}>
+                  Les voix "en ligne" (Google) sonnent beaucoup mieux sur mobile.
+                </div>
+              </div>
+            )}
 
             {/* Input texte */}
             <div className="sim-input-row">
